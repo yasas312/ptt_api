@@ -9,51 +9,42 @@ ffmpeg.setFfmpegPath(ffmpegStatic);
 const app = express();
 app.use(cors());
 
-app.get("/", (req, res) => {
-    res.send("Dileepa Tech PTT Converter API is Running");
-});
-
 app.get("/tools/ptt", async (req, res) => {
     const audioUrl = req.query.url;
 
     if (!audioUrl) {
-        return res.status(400).json({ status: false, message: "Please provide a valid MP3 URL." });
+        return res.status(400).json({ status: false, message: "URL එකක් ඇතුළත් කරන්න" });
     }
-
     const outputPath = path.join("/tmp", `voice_${Date.now()}.opus`);
 
     try {
         ffmpeg(audioUrl)
+            .inputOptions(['-reconnect 1', '-reconnect_streamed 1', '-reconnect_delay_max 5'])
             .toFormat("opus")
             .audioCodec("libopus")
             .audioChannels(1)
             .audioFrequency(48000)
             .outputOptions([
                 "-application voip",
-                "-frame_duration 20",
-                "-vbr on"
+                "-frame_duration 20"
             ])
             .on("error", (err) => {
-                console.error("FFmpeg Error:", err);
-                res.status(500).json({ status: false, error: err.message });
+                console.error("FFmpeg Error:", err.message);
+                if (!res.headersSent) {
+                    res.status(500).json({ status: false, error: "පරිවර්තනය අසාර්ථකයි" });
+                }
             })
             .on("end", () => {
                 const buffer = fs.readFileSync(outputPath);
-                res.set("Content-Type", "audio/ogg");
+                res.setHeader("Content-Type", "audio/ogg; codecs=opus");
                 res.send(buffer);
-                if (fs.existsSync(outputPath)) {
-                    fs.unlinkSync(outputPath);
-                }
+                if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
             })
             .save(outputPath);
 
     } catch (err) {
         res.status(500).json({ status: false, error: err.message });
     }
-});
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
 });
 
 module.exports = app;
