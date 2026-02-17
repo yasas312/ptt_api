@@ -2,8 +2,9 @@ const express = require("express");
 const cors = require("cors");
 const ffmpeg = require("fluent-ffmpeg");
 const ffmpegStatic = require("ffmpeg-static");
-const fs = require("fs");
-const path = require("path");
+const axios = require("axios");
+const { PassThrough } = require("stream");
+
 ffmpeg.setFfmpegPath(ffmpegStatic);
 
 const app = express();
@@ -15,11 +16,20 @@ app.get("/tools/ptt", async (req, res) => {
     if (!audioUrl) {
         return res.status(400).json({ status: false, message: "URL එකක් ඇතුළත් කරන්න" });
     }
-    const outputPath = path.join("/tmp", `voice_${Date.now()}.opus`);
 
     try {
-        ffmpeg(audioUrl)
-            .inputOptions(['-reconnect 1', '-reconnect_streamed 1', '-reconnect_delay_max 5'])
+        // 1. මුලින්ම ලින්ක් එක වැඩද කියලා Axios හරහා චෙක් කරනවා
+        const response = await axios({
+            method: 'get',
+            url: audioUrl,
+            responseType: 'stream'
+        });
+
+        // 2. Header එක PTT වලට ගැලපෙන ලෙස සෙට් කරනවා
+        res.setHeader("Content-Type", "audio/ogg; codecs=opus");
+
+        // 3. FFmpeg හරහා කෙලින්ම Stream එක Convert කිරීම
+        ffmpeg(response.data)
             .toFormat("opus")
             .audioCodec("libopus")
             .audioChannels(1)
@@ -30,20 +40,16 @@ app.get("/tools/ptt", async (req, res) => {
             ])
             .on("error", (err) => {
                 console.error("FFmpeg Error:", err.message);
+                // Header එක දැනටමත් යවා ඇත්නම් error එකක් යවන්න බැහැ
                 if (!res.headersSent) {
-                    res.status(500).json({ status: false, error: "පරිවර්තනය අසාර්ථකයි" });
+                    res.status(500).json({ status: false, error: "Conversion Failed" });
                 }
             })
-            .on("end", () => {
-                const buffer = fs.readFileSync(outputPath);
-                res.setHeader("Content-Type", "audio/ogg; codecs=opus");
-                res.send(buffer);
-                if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
-            })
-            .save(outputPath);
+            .pipe(res, { end: true }); // කෙලින්ම response එකට pipe කරනවා
 
     } catch (err) {
-        res.status(500).json({ status: false, error: err.message });
+        console.error("Axios/FFmpeg Error:", err.message);
+        res.status(500).json({ status: false, error: "Audio එක ලබා ගැනීමට නොහැකි විය" });
     }
 });
 
